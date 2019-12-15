@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from collections import deque
 import heapq as hq
 import numpy as np
+import functools
 
 map_hanoi = {
     "hoan_kiem": 1,
@@ -19,7 +20,7 @@ prob_call_map = {
     "hoan_kiem": 0.8,
     "ba_dinh": 0.5,
     "cau_giay": 0.6,
-    "hai_ba_trung": 0.5,
+    "hai_ba_trung": 0.45,
     "dong_da": 0.7,
     "thanh_xuan": 0.4,
     "gia_lam": 0.4
@@ -57,7 +58,7 @@ class Map():
     def generate_request(self):
         """Go through every location, roll random for requests"""
         for node in self.map.nodes:
-            if rd.random() < self.map.nodes[node]["prob_call"]:
+            if rd.random() <= self.map.nodes[node]["prob_call"]:
                 request = Request(at_node=node)
                 self.send_to_nearest_station(request)
 
@@ -67,6 +68,7 @@ class Map():
         to_visit = deque([from_node])
         while to_visit:
             curr_node = to_visit.pop()
+            # There is a chance that the call comes from a neighborhood with a station
             if self.map.nodes[curr_node]["station"]:
                 return curr_node
             for node in list(self.map.neighbors(curr_node)):
@@ -87,17 +89,62 @@ class Map():
 
     def init_stations_amb_1(self, num_stations, total_ambulances):
         """
-        Initialize the stations. Prioritize high-risk neighborhoods.
+        Strategy 1: Initialize the stations and prioritize high-risk neighborhoods.
         Equally allocate ambulances to each station
         """
+        # Sort the nodes according to risk probabilities
         sorted_risk = [(node, self.map.nodes[node]["prob_call"]) for node in list(self.map.nodes)]
         sorted_risk = sorted(sorted_risk, key=lambda x: x[1], reverse=True)
+
+        # Add a station to each node, with appropriate # of ambulances
         for i in range(0, num_stations):
             self.add_station_to(sorted_risk[i][0], total_ambulances // num_stations)
 
         # Add any leftover ambulances to the first station (most risky location)
         first_station = self.map.nodes[sorted_risk[0][0]]["station"]
         first_station.ambulances += [0] * (total_ambulances % num_stations)
+
+    
+    def init_stations_amb_2(self, num_stations, total_ambulances):
+        """
+        Strategy 2: Same distribution of stations as Strat 1.
+        Preferentially distribute total ambulances based on risk-profile
+        """
+        # Sort the nodes according to risk probabilities
+        sorted_risk = [(node, self.map.nodes[node]["prob_call"]) for node in list(self.map.nodes)]
+        sorted_risk = sorted(sorted_risk, key=lambda x: x[1], reverse=True)
+
+        # Add a station to the nodes, set num of ambulances to 1
+        # So each station has at least 1 ambulance first
+        for i in range(0, num_stations):
+            self.add_station_to(sorted_risk[i][0], 1)
+        
+        # Use the roulette-wheel probability method to pick stations
+        cumsum_risk = np.cumsum([sorted_risk[i][1] for i in range(len(sorted_risk)) if i < num_stations])
+
+        allocated_amb = num_stations
+        while allocated_amb != total_ambulances:
+            # searchsorted() returns an array, so we have to select the first element
+            idx = cumsum_risk.searchsorted(np.random.uniform(0, cumsum_risk[-1], size=1))[0]
+            curr_node = sorted_risk[idx][0]
+
+            # Add an ambulance to the station
+            self.map.nodes[curr_node]["station"].ambulances.append(0)
+            allocated_amb += 1
+    
+
+    def init_stations_amb_3(self, num_stations, total_ambulances):
+        """
+        Strategy 3: Randomly distributes stations. Equally distribute ambulances
+        """
+        # Select random nodes to put stations in
+        station_nodes = np.random.choice(list(self.map.nodes), num_stations, replace=False)
+        for i in station_nodes:
+            self.add_station_to(i, total_ambulances // num_stations)
+        
+        # Add any leftover ambulances to the most risky location
+        most_risky_node = max([self.map.nodes[node] for node in station_nodes], key=lambda x: x["prob_call"])
+        most_risky_node["station"].ambulances.extend([0] * (total_ambulances % num_stations))
 
 
     def use_stations(self):
@@ -111,7 +158,9 @@ class Map():
         for node in self.nodes_with_station:
             self.map.nodes[node]["station"].decrement_ambulance_wait_time()
 
+
     def increment_all_requests_wait_time(self):
+        """Increment waiting times for all existing requests"""
         for node in self.nodes_with_station:
             self.map.nodes[node]["station"].increment_requests_wait_time() 
 
@@ -176,8 +225,7 @@ class Station():
         """
         def decrement(wait_time):
             return wait_time - 1 if wait_time > 0 else wait_time
-        
-        # print("node", self.location, self.ambulances)
+
         self.ambulances = list(map(decrement, self.ambulances))
         hq.heapify(self.ambulances)
     
@@ -200,30 +248,105 @@ class Request():
 class Simulation():
     def __init__(self, stations, ambulances):
         self.map = Map()
-        self.map.init_stations_amb_1(num_stations=stations, total_ambulances=ambulances)
+        self.num_stations = stations
+        self.num_ambulances = ambulances
 
 
-    def run_sim(self, interval=10):
-        for minute in range(20000):
+    def use_strategy(self, strat_num):
+        """Select a strategy to distribute stations and ambulances"""
+        if strat_num == 1:
+            self.map.init_stations_amb_1(num_stations=self.num_stations, total_ambulances=self.num_ambulances)
+        elif strat_num == 2:
+            self.map.init_stations_amb_2(num_stations=self.num_stations, total_ambulances=self.num_ambulances)
+        elif strat_num == 3:
+            self.map.init_stations_amb_3(num_stations=self.num_stations, total_ambulances=self.num_ambulances)
+    
+        
+    def run_sim(self, interval=10, steps=20000):
+        """
+        Run simulation for _ steps
+        At every _ interval, generate new requests
+        """
+        for minute in range(steps):
+            # station = self.map.map.nodes[self.map.nodes_with_station[0]]["station"]
+            # print(station.requests)
+            # print(station.location)
+            # print(station.ambulances)
+
             self.map.decrement_all_ambulance_wait_time()
             self.map.increment_all_requests_wait_time()
-            if minute % 10 == 0:
-                print(minute)
+            if minute % interval == 0:
                 self.map.generate_request()
             self.map.use_stations()
-    
-    def hist_waiting_time(self):
+
+
+    def get_request_times(self, merge=False):
+        """
+        Returns (station node, waiting time from that node) by default
+        If merge = True, return data as a list with only int elements
+        """
         data = []
         for node in self.map.nodes_with_station:
-            data.extend(self.map.map.nodes[node]["station"].request_wait_times)
+            data.append((node, self.map.map.nodes[node]["station"].request_wait_times))
+        
+        if merge:
+            return functools.reduce(lambda a, b: a + b[1], data, [])
+        else:
+            return data
+    
+    
+
+    def hist_request_time_general(self):
+        """
+        Distribution of calls completion times for all stations
+        """
+        data = self.get_request_times(merge=True)
         plt.hist(data)
         plt.title(f"Average {round(np.average(data), 2)}, Median {round(np.median(data), 2)}, 95% Interval {np.percentile(data, [2.5, 97.5])}")
         plt.show()
-        # print(np.average(data))
-        # print(np.percentile(data, [2.5, 97.5]))
-        # print(np.median(data))
 
     
-sim = Simulation(stations=4, ambulances=20)
-sim.run_sim()
-sim.hist_waiting_time()
+    def hist_request_time_per_station(self):
+        """
+        Distribution of calls completion times for each station
+        """
+        data = self.get_request_times(merge=False)
+        fig, axs = plt.subplots(1, len(data))
+        for i in range(len(data)):
+            axs[i].hist(data[i][1])
+            axs[i].set_title(f"Node {data[i][0]}, Avg resp time: {round(np.average(data[i][1]), 2)}")
+        plt.show()
+
+
+def run_sim_strat(strat_num, stations, ambulances, plot_general=False, plot_each=False):
+    sim = Simulation(stations=stations, ambulances=ambulances)
+    sim.use_strategy(strat_num)
+    sim.run_sim()
+
+    # Plotting
+    if plot_each:
+        sim.hist_request_time_per_station()
+    if plot_general:
+        sim.hist_request_time_general()
+
+    # Returns average request completion times by default
+    # TODO: Other metrics go here too
+    return np.average(sim.get_request_times(merge=True))
+
+
+def mc_average_request_completion_time(trials, strategy, stations, ambulances):
+    """MC Simulation for a strategy"""
+    mc_data = []
+    for i in range(trials):
+        print(i)
+        sim_results = run_sim_strat(strat_num=strategy, stations=stations, ambulances=ambulances)
+        mc_data.append(sim_results)
+    plt.hist(mc_data, cumulative=True, density=True, bins=50, histtype="step")
+    plt.title(f"Strategy {strategy}, Average {round(np.average(mc_data), 2)}, Median {round(np.median(mc_data), 2)}, 95% Interval {np.percentile(mc_data, [2.5, 97.5])}")
+    plt.show()
+
+
+# run_sim_strat(strat_num=3, stations=4, ambulances=20, plot_general=True)
+# mc_average_request_completion_time(trials=150, strategy=1, stations=4, ambulances=20)
+# mc_average_request_completion_time(trials=150, strategy=2, stations=4, ambulances=20)
+mc_average_request_completion_time(trials=150, strategy=3, stations=4, ambulances=20)
