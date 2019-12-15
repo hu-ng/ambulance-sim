@@ -3,6 +3,7 @@ import random as rd
 import matplotlib.pyplot as plt
 from collections import deque
 import heapq as hq
+import numpy as np
 
 map_hanoi = {
     "hoan_kiem": 1,
@@ -54,40 +55,65 @@ class Map():
 
 
     def generate_request(self):
-        """
-        Go through every location, roll random for requests
-        """
+        """Go through every location, roll random for requests"""
         for node in self.map.nodes:
             if rd.random() < self.map.nodes[node]["prob_call"]:
                 request = Request(at_node=node)
-                send_to_nearest_station(self, request)
+                self.send_to_nearest_station(request)
 
 
     def find_nearest_station(self, from_node):
-        """
-        Find nearest node with a station from a node using BFS
-        """
+        """ Find nearest node with a station from a node using BFS"""
         to_visit = deque([from_node])
         while to_visit:
             curr_node = to_visit.pop()
-            if self.map[curr_node]["station"]:
+            if self.map.nodes[curr_node]["station"]:
                 return curr_node
             for node in list(self.map.neighbors(curr_node)):
                 to_visit.appendleft(node)
 
 
     def send_to_nearest_station(self, request):
-        """
-        Send request to the nearest station
-        """
-        station_node = self.find_nearest_station(request.at_node)
-        station_node["station"].take_request(request)
+        """Send request to the nearest station"""
+        station_node = self.find_nearest_station(request.location)
+        self.map.nodes[station_node]["station"].take_request(request)
 
 
     def add_station_to(self, node, num_ambulances):
-        if not self.map.node[node]["station"]:
-            self.map.node[node]["station"] = Station(map=self.map, at_node=node, num_ambulances=num_ambulances)
+        if not self.map.nodes[node]["station"]:
+            self.map.nodes[node]["station"] = Station(map=self.map, at_node=node, num_ambulances=num_ambulances)
             self.nodes_with_station.append(node)
+
+
+    def init_stations_amb_1(self, num_stations, total_ambulances):
+        """
+        Initialize the stations. Prioritize high-risk neighborhoods.
+        Equally allocate ambulances to each station
+        """
+        sorted_risk = [(node, self.map.nodes[node]["prob_call"]) for node in list(self.map.nodes)]
+        sorted_risk = sorted(sorted_risk, key=lambda x: x[1], reverse=True)
+        for i in range(0, num_stations):
+            self.add_station_to(sorted_risk[i][0], total_ambulances // num_stations)
+
+        # Add any leftover ambulances to the first station (most risky location)
+        first_station = self.map.nodes[sorted_risk[0][0]]["station"]
+        first_station.ambulances += [0] * (total_ambulances % num_stations)
+
+
+    def use_stations(self):
+        """Order all stations to dispatch ambulances"""
+        for node in self.nodes_with_station:
+            self.map.nodes[node]["station"].dispatch_ambulance()
+
+
+    def decrement_all_ambulance_wait_time(self):
+        """Decrement wait times for all stations"""
+        for node in self.nodes_with_station:
+            self.map.nodes[node]["station"].decrement_ambulance_wait_time()
+
+    def increment_all_requests_wait_time(self):
+        for node in self.nodes_with_station:
+            self.map.nodes[node]["station"].increment_requests_wait_time() 
 
 
 class Station():
@@ -96,7 +122,8 @@ class Station():
         self.requests = deque()
         # Use a heap to always choose the ambulance with the smallest waiting time
         # All ambulances in the beginning are idle
-        self.ambulances = hq.heapify([0 for _ in range(num_ambulances)])
+        self.ambulances = [0 for _ in range(num_ambulances)]
+        hq.heapify(self.ambulances)
         self.location = at_node
         self.request_wait_times = []
         self.map = map
@@ -107,6 +134,13 @@ class Station():
 
 
     def dispatch_ambulance(self):
+        def _sum_of_weights(path):
+            """ Helper function to get path total weight"""
+            sum = 0
+            for i in range(len(path) - 1):
+                sum += self.map.edges[(path[i], path[i+1])]["weight"]
+            return sum
+
         # If there is at least 1 request
         if len(self.requests) >= 1:
             # If there are still idle ambulances
@@ -124,8 +158,8 @@ class Station():
                 else:
                     # Find shortest path given the weights
                     path = nx.shortest_path(self.map, self.location, request.location, weight="weight")
-                    patient_wait_time = sum_of_weights(path) + rd.randint(5, 10)
-                    ambulance_wait_time = patient_wait_time + sum_of_weights(path)
+                    patient_wait_time = _sum_of_weights(path) + rd.randint(5, 10)
+                    ambulance_wait_time = patient_wait_time + _sum_of_weights(path)
 
                 # Update ambulance waiting time
                 hq.heappushpop(self.ambulances, ambulance_wait_time)
@@ -136,19 +170,22 @@ class Station():
                 self.request_wait_times.append(max(patient_wait_time, request.wait_time))
 
 
-
-    def sum_of_weights(self, path):
-        sum = 0
-        for i in range(len(path) - 1):
-            sum += self.map.edges[(path[i], path[i+1])]
-        return sum
-
-
     def decrement_ambulance_wait_time(self):
         """
         Decrease waiting times of all operating vehicles by 1
         """
-        self.ambulances = hq.heapify([amb -= 1 for amb in self.ambulances if amb > 0])
+        def decrement(wait_time):
+            return wait_time - 1 if wait_time > 0 else wait_time
+        
+        # print("node", self.location, self.ambulances)
+        self.ambulances = list(map(decrement, self.ambulances))
+        hq.heapify(self.ambulances)
+    
+
+    def increment_requests_wait_time(self):
+        """Increment wait time for all unserved calls"""
+        for req in self.requests:
+            req.increment_wait_time()
 
 
 class Request():
@@ -160,6 +197,33 @@ class Request():
         self.wait_time += 1
 
 
-map = Map()
-for edge in map.map.edges:
-    print(map.map.edges[(1,2)]["weight"])
+class Simulation():
+    def __init__(self, stations, ambulances):
+        self.map = Map()
+        self.map.init_stations_amb_1(num_stations=stations, total_ambulances=ambulances)
+
+
+    def run_sim(self, interval=10):
+        for minute in range(20000):
+            self.map.decrement_all_ambulance_wait_time()
+            self.map.increment_all_requests_wait_time()
+            if minute % 10 == 0:
+                print(minute)
+                self.map.generate_request()
+            self.map.use_stations()
+    
+    def hist_waiting_time(self):
+        data = []
+        for node in self.map.nodes_with_station:
+            data.extend(self.map.map.nodes[node]["station"].request_wait_times)
+        plt.hist(data)
+        plt.title(f"Average {round(np.average(data), 2)}, Median {round(np.median(data), 2)}, 95% Interval {np.percentile(data, [2.5, 97.5])}")
+        plt.show()
+        # print(np.average(data))
+        # print(np.percentile(data, [2.5, 97.5]))
+        # print(np.median(data))
+
+    
+sim = Simulation(stations=4, ambulances=20)
+sim.run_sim()
+sim.hist_waiting_time()
