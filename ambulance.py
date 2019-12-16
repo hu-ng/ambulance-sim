@@ -82,6 +82,7 @@ class Map():
 
 
     def add_station_to(self, node, num_ambulances):
+        """Add a station and ambulances to a node"""
         if not self.map.nodes[node]["station"]:
             self.map.nodes[node]["station"] = Station(map=self.map, at_node=node, num_ambulances=num_ambulances)
             self.nodes_with_station.append(node)
@@ -174,7 +175,12 @@ class Station():
         self.ambulances = [0 for _ in range(num_ambulances)]
         hq.heapify(self.ambulances)
         self.location = at_node
+        
+        # First metric: request completion times
         self.request_wait_times = []
+
+        # Second metric: outstanding number of requests
+        self.outstanding_requests = []
         self.map = map
 
 
@@ -183,6 +189,7 @@ class Station():
 
 
     def dispatch_ambulance(self):
+        """Send ambulances out to serve requests"""
         def _sum_of_weights(path):
             """ Helper function to get path total weight"""
             sum = 0
@@ -217,6 +224,8 @@ class Station():
                 # The maximum between the time it takes for the ambulance to arrive and
                 # the time the caller had to wait for the ambulance arrive
                 self.request_wait_times.append(max(patient_wait_time, request.wait_time))
+        # At the end of each dispatch, record how many requests are left on the queue
+        self.outstanding_requests.append(len(self.requests))
 
 
     def decrement_ambulance_wait_time(self):
@@ -272,6 +281,8 @@ class Simulation():
             # print(station.requests)
             # print(station.location)
             # print(station.ambulances)
+            # for node in self.map.nodes_with_station:
+            #     print(self.map.map.nodes[node]["station"].requests)
 
             self.map.decrement_all_ambulance_wait_time()
             self.map.increment_all_requests_wait_time()
@@ -293,60 +304,101 @@ class Simulation():
             return functools.reduce(lambda a, b: a + b[1], data, [])
         else:
             return data
-    
-    
 
-    def hist_request_time_general(self):
+    
+    def get_outstanding_requests(self, merge=False):
         """
-        Distribution of calls completion times for all stations
+        Returns (station node, outstanding requests from that node) by default
+        If merge = True, add all lists together, element wise
         """
-        data = self.get_request_times(merge=True)
+        data = []
+        for node in self.map.nodes_with_station:
+            data.append((node, self.map.map.nodes[node]["station"].outstanding_requests))
+        
+        if merge:
+            # Add data from all station nodes, element-wise
+            return functools.reduce(lambda a, b: np.add(a, b[1]), data, [0]*len(data[0][1]))
+        else:
+            return data
+        
+    
+    def hist_general(self, metric):
+        """
+        Generate a histogram for a metric.
+        Combines metric data from all stations.
+        """
+        data = []
+        if metric == "completion_time":
+            data = self.get_request_times(merge=True)
+        elif metric == "outstanding_req":
+            data = self.get_outstanding_requests(merge=True)
+        
         plt.hist(data)
         plt.title(f"Average {round(np.average(data), 2)}, Median {round(np.median(data), 2)}, 95% Interval {np.percentile(data, [2.5, 97.5])}")
         plt.show()
 
     
-    def hist_request_time_per_station(self):
+    def hist_per_station(self, metric):
         """
-        Distribution of calls completion times for each station
+        Generate histograms for a metric.
+        One histogram for each station.
         """
-        data = self.get_request_times(merge=False)
+        data = []
+        if metric == "completion_time":
+            data = self.get_request_times(merge=False)
+        elif metric == "outstanding_req":
+            data = self.get_outstanding_requests(merge=False)
+        
         fig, axs = plt.subplots(1, len(data))
+        fig.suptitle(f"Histograms for {metric}")
         for i in range(len(data)):
             axs[i].hist(data[i][1])
-            axs[i].set_title(f"Node {data[i][0]}, Avg resp time: {round(np.average(data[i][1]), 2)}")
+            axs[i].set_title(f"Node {data[i][0]}, Avg: {round(np.average(data[i][1]), 2)}")
         plt.show()
+        
 
-
-def run_sim_strat(strat_num, stations, ambulances, plot_general=False, plot_each=False):
+def run_sim_strat(strat_num, stations, ambulances, metric, plot_general=False, plot_each=False):
+    """
+    Run the simulation for a specific strategy, # stations, # ambulances.
+    Set a metric to plot. Either plot aggregate data for the map or for each station.
+    """
     sim = Simulation(stations=stations, ambulances=ambulances)
     sim.use_strategy(strat_num)
     sim.run_sim()
 
     # Plotting
     if plot_each:
-        sim.hist_request_time_per_station()
+        sim.hist_per_station(metric=metric)
     if plot_general:
-        sim.hist_request_time_general()
+        sim.hist_general(metric=metric)
 
     # Returns average request completion times by default
     # TODO: Other metrics go here too
-    return np.average(sim.get_request_times(merge=True))
+    if metric == "completion_time":
+        return np.average(sim.get_request_times(merge=True))
+    elif metric == "outstanding_req":
+        return np.average(sim.get_outstanding_requests(merge=True))
 
 
-def mc_average_request_completion_time(trials, strategy, stations, ambulances):
-    """MC Simulation for a strategy"""
+def monte_carlo_avg_distribution(trials, strategy, stations, ambulances, metric):
+    """
+    MC Simulation for a strategy and metric.
+    Returns a distribution of averages.
+    """
     mc_data = []
     for i in range(trials):
-        print(i)
-        sim_results = run_sim_strat(strat_num=strategy, stations=stations, ambulances=ambulances)
+        if i % 5 == 0:
+            print(i)
+        sim_results = run_sim_strat(strat_num=strategy, stations=stations, ambulances=ambulances, metric=metric)
         mc_data.append(sim_results)
     plt.hist(mc_data, cumulative=True, density=True, bins=50, histtype="step")
-    plt.title(f"Strategy {strategy}, Average {round(np.average(mc_data), 2)}, Median {round(np.median(mc_data), 2)}, 95% Interval {np.percentile(mc_data, [2.5, 97.5])}")
+    plt.title(f"Strategy {strategy}, {metric} metric, Average {round(np.average(mc_data), 2)}, Median {round(np.median(mc_data), 2)}, 95% Interval {np.percentile(mc_data, [2.5, 97.5])}")
     plt.show()
 
 
-# run_sim_strat(strat_num=3, stations=4, ambulances=20, plot_general=True)
-# mc_average_request_completion_time(trials=150, strategy=1, stations=4, ambulances=20)
-# mc_average_request_completion_time(trials=150, strategy=2, stations=4, ambulances=20)
-mc_average_request_completion_time(trials=150, strategy=3, stations=4, ambulances=20)
+# TODO: write a function that compares all three strategies on a graph based on increasing number of ambulances with the same number of stations
+
+# run_sim_strat(strat_num=1, stations=4, ambulances=12, plot_general=True, plot_each=True, metric="outstanding_req")
+monte_carlo_avg_distribution(trials=150, strategy=2, stations=4, ambulances=20, metric="outstanding_req")
+# monte_carlo_avg_distribution(trials=150, strategy=2, stations=4, ambulances=20)
+# monte_carlo_avg_distribution(trials=150, strategy=3, stations=4, ambulances=20)
