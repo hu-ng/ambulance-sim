@@ -1,10 +1,12 @@
 import networkx as nx
 import random as rd
 import matplotlib.pyplot as plt
-from collections import deque
 import heapq as hq
 import numpy as np
 import functools
+import pandas as pd
+from collections import deque
+
 
 map_hanoi = {
     "hoan_kiem": 1,
@@ -192,6 +194,9 @@ class Station():
 
         # Second metric: outstanding number of requests
         self.outstanding_requests = []
+
+        # Third metric: number of idle ambulances
+        self.idle_ambulances = []
         self.map = map
 
 
@@ -235,8 +240,12 @@ class Station():
                 # The maximum between the time it takes for the ambulance to arrive and
                 # the time the caller had to wait for the ambulance arrive
                 self.request_wait_times.append(max(patient_wait_time, request.wait_time))
-        # At the end of each dispatch, record how many requests are left on the queue
+
+        # At the end of each dispatch, record how many calls are left on queue
         self.outstanding_requests.append(len(self.requests))
+
+        # At the end of each dispatch, record how many idle ambulances there are
+        self.idle_ambulances.append(len([a for a in self.ambulances if a == 0]))
 
 
     def decrement_ambulance_wait_time(self):
@@ -331,6 +340,21 @@ class Simulation():
             return functools.reduce(lambda a, b: np.add(a, b[1]), data, [0]*len(data[0][1]))
         else:
             return data
+    
+    def get_idle_ambulances(self, merge=False):
+        """
+        Returns (station node, number of idle ambulances in that node) by default
+        If merge = True, add all lists together, element wise
+        """
+        data = []
+        for node in self.map.nodes_with_station:
+            data.append((node, self.map.map.nodes[node]["station"].idle_ambulances))
+        
+        if merge:
+            # Add data from all station nodes, element-wise
+            return functools.reduce(lambda a, b: np.add(a, b[1]), data, [0]*len(data[0][1]))
+        else:
+            return data  
         
     
     def hist_general(self, metric):
@@ -343,6 +367,8 @@ class Simulation():
             data = self.get_request_times(merge=True)
         elif metric == "outstanding_req":
             data = self.get_outstanding_requests(merge=True)
+        elif metric == "idle_ambulances":
+            data = self.get_idle_ambulances(merge=True)
         
         plt.hist(data)
         plt.title(f"Average {round(np.average(data), 2)}, Median {round(np.median(data), 2)}, 95% Interval {np.percentile(data, [2.5, 97.5])}")
@@ -359,6 +385,8 @@ class Simulation():
             data = self.get_request_times(merge=False)
         elif metric == "outstanding_req":
             data = self.get_outstanding_requests(merge=False)
+        elif metric == "idle_ambulances":
+            data = self.get_idle_ambulances(merge=False)
         
         fig, axs = plt.subplots(1, len(data))
         fig.suptitle(f"Histograms for {metric}")
@@ -368,14 +396,14 @@ class Simulation():
         plt.show()
         
 
-def run_sim_strat(strat_num, stations, ambulances, metric, plot_general=False, plot_each=False):
+def run_sim_strat(strat_num, stations, ambulances, metric, interval=10, steps=20000, plot_general=False, plot_each=False):
     """
     Run the simulation for a specific strategy, # stations, # ambulances.
     Set a metric to plot. Either plot aggregate data for the map or for each station.
     """
     sim = Simulation(stations=stations, ambulances=ambulances)
     sim.use_strategy(strat_num)
-    sim.run_sim(interval=10)
+    sim.run_sim(interval=interval, steps=steps)
 
     # Plotting
     if plot_each:
@@ -387,12 +415,14 @@ def run_sim_strat(strat_num, stations, ambulances, metric, plot_general=False, p
         return np.average(sim.get_request_times(merge=True))
     elif metric == "outstanding_req":
         return np.average(sim.get_outstanding_requests(merge=True))
+    elif metric == "idle_ambulances":
+        return np.average(sim.get_idle_ambulances(merge=True))
 
 
-def monte_carlo_avg_distribution(trials, strategy, stations, ambulances, metric):
+def monte_carlo_avg_distribution(trials, strategy, stations, ambulances, metric, cumulative=False, density=False):
     """
-    MC Simulation for a strategy and metric.
-    Returns a distribution of averages.
+    MC Simulation for a specific set of parameters: strategy, num stations, num ambulances, metric.
+    Returns a distribution of the averages of the chosen metric.
     """
     mc_data = []
     for i in range(trials):
@@ -400,15 +430,14 @@ def monte_carlo_avg_distribution(trials, strategy, stations, ambulances, metric)
             print(i)
         sim_results = run_sim_strat(strat_num=strategy, stations=stations, ambulances=ambulances, metric=metric)
         mc_data.append(sim_results)
-    plt.hist(mc_data, cumulative=True, density=True, bins=50, histtype="step")
+    plt.hist(mc_data, cumulative=cumulative, density=density, bins=50, histtype="step")
     plt.title(f"Strategy {strategy}, {metric} metric, Average {round(np.average(mc_data), 2)}, Median {round(np.median(mc_data), 2)}, 95% Interval {np.percentile(mc_data, [2.5, 97.5])}")
     plt.show()
 
-# TODO: write a function that compares all three strategies on a graph based on increasing number of ambulances with the same number of stations
 
 def strat_compare(trials, stations, metric):
     """
-    Compares all three strategies with increasing number of ambulances and the same number of stations
+    Plot a graph that compares all three strategies with increasing number of ambulances for the same number of stations
     """
     data = {}
     for strat in range(1, 4):
@@ -439,11 +468,44 @@ def strat_compare(trials, stations, metric):
     plt.title(f"Comparing strategy performance with a constant # of stations and a varying # of ambulances")
     plt.legend()
     plt.show()
-    
-            
-strat_compare(100, 4, "completion_time")
+
+
+def generate_mc_data(trials):
+    # 3 strategies
+    data = []
+    for strat_num in range(1, 4):
+        print("strat", strat_num)
+        # Minimum of 1 station, maximum of 6 stations
+        for num_stations in range(1, 7):
+            print("stations", num_stations)
+            # Minimum of 6 ambulances, maximum of 25 ambulances
+            for num_ambulances in range(6, 26):
+                print("ambulances", num_ambulances)
+                # For 3 different metrics
+                # Storage for 3 metrics, in the order as shown below
+                data_metric = []
+                for metric in ["completion_time", "outstanding_req", "idle_ambulances"]:
+                    mc_data = []
+                    for i in range(trials):
+                        sim_results = run_sim_strat(strat_num=strat_num, stations=num_stations, ambulances=num_ambulances, metric=metric, steps=7000)
+                        mc_data.append(sim_results)
+                    data_metric.append(np.average(mc_data))
+                data.append([strat_num, num_stations, num_ambulances] + data_metric)
+    df = pd.DataFrame({
+        "strategy": [row[0] for row in data],
+        "stations": [row[1] for row in data],
+        "total_ambulances": [row[2] for row in data],
+        "completion_time": [row[3] for row in data],
+        "outstanding_req": [row[4] for row in data],
+        "idle_ambulances": [row[5] for row in data]
+    })
+    df.to_csv("mc_data.csv")
+
+generate_mc_data(100)
+
+# strat_compare(100, 4, "completion_time")
 # strat_compare(100, 4, "outstanding_req")
-# run_sim_strat(strat_num=2, stations=4, ambulances=12, plot_general=True, plot_each=True, metric="completion_time")
-# monte_carlo_avg_distribution(trials=100, strategy=2, stations=4, ambulances=20, metric="outstanding_req")
+run_sim_strat(strat_num=1, stations=4, ambulances=12, steps=8000, plot_general=False, plot_each=False, metric="completion_time")
+# monte_carlo_avg_distribution(trials=500, strategy=2, stations=4, ambulances=10, metric="idle_ambulances", cumulative=False, density=True)
 # monte_carlo_avg_distribution(trials=150, strategy=2, stations=4, ambulances=20)
 # monte_carlo_avg_distribution(trials=150, strategy=3, stations=4, ambulances=20)
