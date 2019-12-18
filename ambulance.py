@@ -12,33 +12,44 @@ map_hanoi = {
     "cau_giay": 3,
     "hai_ba_trung": 4,
     "dong_da": 5,
-    "thanh_xuan": 6,
+    "tay_ho": 6,
     "gia_lam": 7
 }
 
+# Assume max probability is 0.8, lowest is 0.2
+def calc_prob_call(density):
+    prob_unit = (0.8 - 0.2)/(52000 - 2000)
+    if density == 2000:
+        return 0.2
+    elif density == 52000:
+        return 0.8
+    else:
+        return 0.2 + (density - 2000)*prob_unit
+
+# Assume that density has a linear relationship with prob call
 prob_call_map = {
-    "hoan_kiem": 0.8,
-    "ba_dinh": 0.5,
-    "cau_giay": 0.6,
-    "hai_ba_trung": 0.45,
-    "dong_da": 0.7,
-    "thanh_xuan": 0.4,
-    "gia_lam": 0.4
+    "hoan_kiem": calc_prob_call(36000),
+    "ba_dinh": calc_prob_call(29000),
+    "cau_giay": calc_prob_call(6000),
+    "hai_ba_trung": calc_prob_call(52000),
+    "dong_da": calc_prob_call(46000),
+    "tay_ho": calc_prob_call(7000),
+    "gia_lam": calc_prob_call(2000)
 }
 
+# Data taken from Google Maps estimation for cars
 edge_hanoi = [
-    (map_hanoi['hoan_kiem'], map_hanoi['ba_dinh'], 15),
+    (map_hanoi['hoan_kiem'], map_hanoi['ba_dinh'], 10),
     (map_hanoi['hoan_kiem'], map_hanoi['dong_da'], 15),
-    (map_hanoi['hoan_kiem'], map_hanoi['hai_ba_trung'], 20),
-    (map_hanoi['dong_da'], map_hanoi['thanh_xuan'], 15),
-    (map_hanoi['dong_da'], map_hanoi['cau_giay'], 25),
-    (map_hanoi['dong_da'], map_hanoi['ba_dinh'], 10),
+    (map_hanoi['hoan_kiem'], map_hanoi['hai_ba_trung'], 10),
+    (map_hanoi['dong_da'], map_hanoi['cau_giay'], 8),
+    (map_hanoi['dong_da'], map_hanoi['ba_dinh'], 8),
     (map_hanoi['dong_da'], map_hanoi['hai_ba_trung'], 15),
-    (map_hanoi['hai_ba_trung'], map_hanoi['thanh_xuan'], 15),
-    (map_hanoi['cau_giay'], map_hanoi['thanh_xuan'], 25),
+    (map_hanoi['cau_giay'], map_hanoi['tay_ho'], 10),
+    (map_hanoi['ba_dinh'], map_hanoi['tay_ho'], 5),
     (map_hanoi['cau_giay'], map_hanoi['ba_dinh'], 15),
-    (map_hanoi['ba_dinh'], map_hanoi['gia_lam'], 20),
-    (map_hanoi['hoan_kiem'], map_hanoi['gia_lam'], 15),
+    (map_hanoi['ba_dinh'], map_hanoi['gia_lam'], 15),
+    (map_hanoi['hoan_kiem'], map_hanoi['gia_lam'], 10),
 ]
 
 
@@ -364,7 +375,7 @@ def run_sim_strat(strat_num, stations, ambulances, metric, plot_general=False, p
     """
     sim = Simulation(stations=stations, ambulances=ambulances)
     sim.use_strategy(strat_num)
-    sim.run_sim()
+    sim.run_sim(interval=10)
 
     # Plotting
     if plot_each:
@@ -372,8 +383,6 @@ def run_sim_strat(strat_num, stations, ambulances, metric, plot_general=False, p
     if plot_general:
         sim.hist_general(metric=metric)
 
-    # Returns average request completion times by default
-    # TODO: Other metrics go here too
     if metric == "completion_time":
         return np.average(sim.get_request_times(merge=True))
     elif metric == "outstanding_req":
@@ -395,10 +404,46 @@ def monte_carlo_avg_distribution(trials, strategy, stations, ambulances, metric)
     plt.title(f"Strategy {strategy}, {metric} metric, Average {round(np.average(mc_data), 2)}, Median {round(np.median(mc_data), 2)}, 95% Interval {np.percentile(mc_data, [2.5, 97.5])}")
     plt.show()
 
-
 # TODO: write a function that compares all three strategies on a graph based on increasing number of ambulances with the same number of stations
 
-# run_sim_strat(strat_num=1, stations=4, ambulances=12, plot_general=True, plot_each=True, metric="outstanding_req")
-monte_carlo_avg_distribution(trials=150, strategy=2, stations=4, ambulances=20, metric="outstanding_req")
+def strat_compare(trials, stations, metric):
+    """
+    Compares all three strategies with increasing number of ambulances and the same number of stations
+    """
+    data = {}
+    for strat in range(1, 4):
+        data[strat] = []
+        print("Strategy", strat)
+        for amb in range(10, 21):
+            mc_data = []
+            print("# Ambulances", amb)
+            for i in range(trials):
+                print(i)
+                sim_results = run_sim_strat(strat_num=strat, stations=stations, ambulances=amb, metric=metric)
+                mc_data.append(sim_results)
+
+            data[strat].append(np.average(mc_data))
+
+    for strat in data:
+        # The colors are randomized each time the function runs to
+        # accommodate for increasing number of lanes you want to plot.
+        # The plot generated here will look different from the plot in the paper
+        # color-wise, but the content should be the same.
+
+        color = list(np.random.choice(range(256), size=3))
+        color = list(map(lambda x: x/256, color))
+        plt.plot(range(10, 21), data[strat], color=color, label = f"Strategy {strat}")
+
+    plt.xlabel("Number of total ambulances in the city")
+    plt.ylabel(f"Average {metric}")
+    plt.title(f"Comparing strategy performance with a constant # of stations and a varying # of ambulances")
+    plt.legend()
+    plt.show()
+    
+            
+strat_compare(100, 4, "completion_time")
+# strat_compare(100, 4, "outstanding_req")
+# run_sim_strat(strat_num=2, stations=4, ambulances=12, plot_general=True, plot_each=True, metric="completion_time")
+# monte_carlo_avg_distribution(trials=100, strategy=2, stations=4, ambulances=20, metric="outstanding_req")
 # monte_carlo_avg_distribution(trials=150, strategy=2, stations=4, ambulances=20)
 # monte_carlo_avg_distribution(trials=150, strategy=3, stations=4, ambulances=20)
