@@ -471,6 +471,9 @@ def strat_compare(trials, stations, metric):
 
 
 def generate_mc_data(trials):
+    """
+    Takes very long to run
+    """
     # 3 strategies
     data = []
     for strat_num in range(1, 4):
@@ -501,11 +504,11 @@ def generate_mc_data(trials):
     })
     df.to_csv("mc_data.csv")
 
-generate_mc_data(100)
+# generate_mc_data(100)
 
 # strat_compare(100, 4, "completion_time")
 # strat_compare(100, 4, "outstanding_req")
-run_sim_strat(strat_num=1, stations=4, ambulances=12, steps=8000, plot_general=False, plot_each=False, metric="completion_time")
-# monte_carlo_avg_distribution(trials=500, strategy=2, stations=4, ambulances=10, metric="idle_ambulances", cumulative=False, density=True)
+# run_sim_strat(strat_num=1, stations=4, ambulances=12, steps=8000, plot_general=False, plot_each=False, metric="completion_time")
+monte_carlo_avg_distribution(trials=100, strategy=1, stations=4, ambulances=12, metric="completion_time", cumulative=False, density=True)
 # monte_carlo_avg_distribution(trials=150, strategy=2, stations=4, ambulances=20)
 # monte_carlo_avg_distribution(trials=150, strategy=3, stations=4, ambulances=20)
