@@ -291,7 +291,7 @@ class Simulation():
             self.map.init_stations_amb_3(num_stations=self.num_stations, total_ambulances=self.num_ambulances)
     
         
-    def run_sim(self, interval=10, steps=20000):
+    def run_sim(self, interval=10, steps=8000):
         """
         Run simulation for _ steps
         At every _ interval, generate new requests
@@ -430,7 +430,7 @@ def monte_carlo_avg_distribution(trials, strategy, stations, ambulances, metric,
             print(i)
         sim_results = run_sim_strat(strat_num=strategy, stations=stations, ambulances=ambulances, metric=metric)
         mc_data.append(sim_results)
-    plt.hist(mc_data, cumulative=cumulative, density=density, bins=50, histtype="step")
+    plt.hist(mc_data, cumulative=cumulative, density=density, histtype="bar")
     plt.title(f"Strategy {strategy}, {metric} metric, Average {round(np.average(mc_data), 2)}, Median {round(np.median(mc_data), 2)}, 95% Interval {np.percentile(mc_data, [2.5, 97.5])}")
     plt.show()
 
@@ -472,7 +472,9 @@ def strat_compare(trials, stations, metric):
 
 def generate_mc_data(trials):
     """
-    Takes very long to run
+    Generates data for every permutation of parameters and strategies.
+    Takes very long (hours) to run a reasonable simulation.
+    # TODO: MAKE IT BETTER
     """
     # 3 strategies
     data = []
@@ -509,6 +511,6 @@ def generate_mc_data(trials):
 # strat_compare(100, 4, "completion_time")
 # strat_compare(100, 4, "outstanding_req")
 # run_sim_strat(strat_num=1, stations=4, ambulances=12, steps=8000, plot_general=False, plot_each=False, metric="completion_time")
-monte_carlo_avg_distribution(trials=100, strategy=1, stations=4, ambulances=12, metric="completion_time", cumulative=False, density=True)
+# monte_carlo_avg_distribution(trials=100, strategy=1, stations=4, ambulances=14, metric="outstanding_req", cumulative=False, density=True)
 # monte_carlo_avg_distribution(trials=150, strategy=2, stations=4, ambulances=20)
 # monte_carlo_avg_distribution(trials=150, strategy=3, stations=4, ambulances=20)

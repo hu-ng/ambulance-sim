@@ -23,7 +23,9 @@ def graph(strategy, metric):
     plt.suptitle(f"Surface plot for strategy {strategy} using {metric} metric")
     plt.show()
 
-# graph(3, "completion_time")
-strat = data["strategy"] == 3
-min_completion = data["completion_time"] <= 11
-print(data[strat & min_completion])
+# graph(1, "completion_time")
+
+# Use this chunk of code to sort through the data and find out combinations of code according to a certain criteria
+strat = data["strategy"] == 1
+min_completion = data["completion_time"] < 11
+print(data[strat].sort_values(by="idle_ambulances", ascending=True))
